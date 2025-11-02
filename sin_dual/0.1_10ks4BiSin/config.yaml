@@ -1,0 +1,28 @@
+batch_size: 128
+checkpoint_path: D:\Users\MichaelPetrizzo2025\Continual_TSDiff\sin_dual\0.1_10ks4BiSin\best_checkpoint.ckpt
+config: configs/sin.yaml
+context_length: 40
+data_samples: 10000
+dataset: custom:dualsinusoidal
+device: cuda:0
+diffusion_config: diffusion_s4
+dt: 0.25
+eval_every: 50
+freq: H
+gradient_clip_val: 0.5
+init_skip: false
+lr: 0.001
+max_epochs: 250
+model: unconditional
+num_batches_per_epoch: 100
+num_samples: 16
+observation_dim: 1
+out_dir: ./
+prediction_length: 20
+q: 0.0
+r: 0.1
+sampler: ddpm
+sampler_params:
+  guidance: quantile
+  scale: 2
+setup: forecasting

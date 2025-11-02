@@ -74,19 +74,18 @@ class SinusoidalWaves():
     def generate(self):
         xs=[]
         ys=[]
-        amplitude=np.random.uniform(1,5.0)
-        frequency=np.random.uniform(1,5.0)
-        phase=np.random.uniform(0,2*np.pi)
-        for step in range(self.length*(int(self.dt**-1))):
-            x = np.sin(frequency*step*self.dt + phase)*amplitude + np.random.normal(0,self.q)
+        amplitude=np.random.uniform(0,1) * 1.8 + 0.2 
+        frequency=np.random.uniform(0,1) * 1.5 + 0.5  
+        phase=np.random.randn(1) * 2 * np.pi
+        time_points = np.arange(0, self.length, self.dt)
+        for t in time_points:
+            x = np.sin(frequency*t + phase)*amplitude + np.random.normal(0,self.q)
             xs.append(x)
             y =  x + np.random.normal(0,self.r)
             ys.append(y)
         return xs, ys
     
-    
-    
-class FourthOrderRungeKutta():
+class DualSinusoidalWaves():
     def __init__(self,
         length,
         dt,
@@ -96,47 +95,95 @@ class FourthOrderRungeKutta():
         ):
         self.length = length
         self.dt = dt
+        self.q = q
         self.r = r
-    def f(self,z):
-        z1_dot = 10*(z[1] - z[0])
-        z2_dot = z[0] * (28 - z[2]) - z[1]
-        z3_dot = z[0] * z[1] - (8/3) * z[2]
-        return np.array([z1_dot,z2_dot,z3_dot])
-    
-    def h_fn(self,x):
-        return 0.5 * (x[..., 0]**2 + x[..., 1]**2) + 0.7 * x[..., 2:3] 
-    
-    def R_inv(self,resid):
+        self.obs_dim = obs_dim
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
         eps = 1e-6
         var = (self.r ** 2) + eps
         R_inv = resid / var
         R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
         return R_inv
     
-    def RK4_step(self,z):
-        k1 = self.f(z)
-        k2 = self.f(z + (self.dt/2)*k1)
-        k3 = self.f(z + (self.dt/2)*k2)
-        k4 = self.f(z + self.dt*k3)
-        return z + (self.dt / 6) * (k1+2*k2+2*k3+k4)
-    
-    def nextUpdate(self,z):
-        z = self.RK4_step(z)
-        noise = np.random.multivariate_normal(mean=np.zeros(3), cov=(0.02**2) * np.eye(3))
-        return z + noise
-    
-    def measurement(self,z):
-        y = .5 * (z[0]**2 + z[1]**2) + .7*z[2]
-        noise = np.random.normal(0,self.r)
-        return y + noise
     
     def generate(self):
-        z = np.zeros(3)
         xs=[]
         ys=[]
-        num_steps = int(self.length / self.dt)
-        for _ in range(num_steps):
-            z = self.nextUpdate(z)
-            xs.append(z)
-            ys.append(self.measurement(z))
-        return xs,ys
+        amplitude1=np.random.uniform(0,1) * 1.8 + 0.2 
+        frequency1=np.random.uniform(0,1) * 1.5 + 0.5  
+        phase1=np.random.randn(1) * 2 * np.pi
+        amplitude2=np.random.uniform(0,1) * 1.8 + 0.2 
+        frequency2=np.random.uniform(0,1) * 1.5 + 0.5  
+        phase2=np.random.randn(1) * 2 * np.pi
+        time_points = np.arange(0, self.length, self.dt)
+        for t in time_points:
+            x = np.sin(frequency1*t + phase1)*amplitude1 +np.sin(frequency2*t + phase2)*amplitude2 + np.random.normal(0,self.q)
+            xs.append(x)
+            y =  x + np.random.normal(0,self.r)
+            ys.append(y)
+        return xs, ys
+    
+class Lorenz():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 3,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+    def h_fn(self, x):
+        return x[..., :self.obs_dim]
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
+        return R_inv
+    
+    
+    def lorenz_step(self,x, sigma=10.0, rho=28.0, beta=8.0/3.0):
+        dx = np.array([sigma*(x[1]-x[0]),
+                    x[0]*(rho-x[2]) - x[1],
+                    x[0]*x[1] - beta*x[2]])
+        return dx
+
+    def generate(self):
+        """Generates one Lorenz trajectory of length self.length."""
+        dt = self.dt
+        q = self.q
+        steps = np.arange(0,self.length,self.dt)
+
+        traj = np.zeros((len(steps), 3), dtype=np.float32)
+
+        x = np.random.randn(3)
+        
+        for i in range(len(steps)):
+            # RK4 integration
+            k1 = self.lorenz_step(x)
+            k2 = self.lorenz_step(x + 0.5 * dt * k1)
+            k3 = self.lorenz_step(x + 0.5 * dt * k2)
+            k4 = self.lorenz_step(x + dt * k3)
+            x = x + dt * (k1 + 2*k2 + 2*k3 + k4) / 6.0
+
+            # Optional process noise
+            if q > 0:
+                x += q * np.random.randn(3)
+
+            traj[i] = x
+
+
+        # Add observation noise if specified
+        obs = traj[..., :self.obs_dim]
+        if self.r > 0:
+            obs = obs + self.r * np.random.randn(*obs.shape)
+
+        return traj,obs

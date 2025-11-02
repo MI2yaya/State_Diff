@@ -18,7 +18,8 @@ dependencies = [
     "seaborn",
     "rich >= 10.2.2",
     "imageio",
-    "natsort"
+    "natsort",
+    "pykeops"
 ]
 
 [build-system]

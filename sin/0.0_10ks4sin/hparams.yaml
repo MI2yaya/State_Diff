@@ -1,0 +1,24 @@
+R_inv: !!python/object/apply:builtins.getattr
+- &id001 !!python/object:dataGeneration.SinusoidalWaves
+  dt: 0.25
+  length: 60
+  obs_dim: 1
+  q: 0.0
+  r: 0.0
+- R_inv
+backbone_parameters:
+  hidden_dim: 64
+  num_residual_blocks: 5
+  time_emb_dim: 256
+context_length: 160
+diffusion_scheduler: !!python/name:sfdiff.utils.linear_beta_schedule ''
+dropout_rate: 0.01
+h_fn: !!python/object/apply:builtins.getattr
+- *id001
+- h_fn
+init_skip: false
+lr: 0.001
+modelType: s4
+observation_dim: 1
+prediction_length: 80
+timesteps: 200
