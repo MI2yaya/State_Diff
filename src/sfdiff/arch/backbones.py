@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from .s4 import S4
-
+from .s5 import S5
 
 class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim):
@@ -24,61 +24,66 @@ class SinusoidalPositionEmbeddings(nn.Module):
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
 
-
-class S4Layer(nn.Module):
-    def __init__(
-        self,
-        d_model,
-        dropout=0.0,
-    ):
+class SequenceLayer(nn.Module):
+    """
+    Wraps either S4Layer or S5Layer with identical API.
+    """
+    def __init__(self, d_model, dropout, block_type="s4"):
         super().__init__()
-        self.layer = S4(
-            d_model=d_model,
-            d_state=128,
-            bidirectional=True,
-            dropout=dropout,
-            transposed=True,
-            postact=None,
-        )
+        self.block_type = block_type.lower()
+
+        if self.block_type == "s4":
+            self.layer = S4(
+                d_model=d_model,
+                d_state=128,
+                bidirectional=True,
+                dropout=dropout,
+                transposed=True,
+                postact=None,
+            )
+        elif self.block_type == "s5":
+            self.layer = S5(
+                d_model=d_model,
+                d_state=64,
+                bidirectional=True,
+                dropout=dropout,
+                transposed=True,
+                postact=None,
+            )
+        else:
+            raise ValueError(f"Unknown block type {block_type}")
+
         self.norm = nn.LayerNorm(d_model)
         self.dropout = (
-            nn.Dropout1d(dropout) if dropout > 0.0 else nn.Identity()
+            nn.Dropout1d(dropout) if dropout > 0 else nn.Identity()
         )
 
     def forward(self, x):
         """
-        Input x is shape (B, d_input, L)
+        x: (B, d_model, L)
         """
-        z = x
-        # Prenorm
-        z = self.norm(z.transpose(-1, -2)).transpose(-1, -2)
-        # Apply layer: we ignore the state input and output for training
+        z = self.norm(x.transpose(-1, -2)).transpose(-1, -2)
         z, _ = self.layer(z)
-        # Dropout on the output of the layer
         z = self.dropout(z)
-        # Residual connection
-        x = z + x
-        return x, None
+        return x + z, None  # residual
 
+    def step(self, x, state):
+        # optional recurrent mode, identical for both S4 & S5
+        z = self.norm(x.transpose(-1, -2)).transpose(-1, -2)
+        z, state = self.layer.step(z, state)
+        return x + z, state
+    
+    
     def default_state(self, *args, **kwargs):
         return self.layer.default_state(*args, **kwargs)
 
-    def step(self, x, state, **kwargs):
-        z = x
-        # Prenorm
-        z = self.norm(z.transpose(-1, -2)).transpose(-1, -2)
-        # Apply layer
-        z, state = self.layer.step(z, state, **kwargs)
-        # Residual connection
-        x = z + x
-        return x, state
 
 
-class S4Block(nn.Module):
-    def __init__(self, d_model, dropout=0.0, expand=2):
+class SequenceBlock(nn.Module):
+    def __init__(self, d_model, dropout=0.0, expand=2,block_type='s4'):
         super().__init__()
         # S4Layer already handles dropout internally
-        self.s4block = S4Layer(d_model, dropout=dropout)
+        self.core = SequenceLayer(d_model, dropout, block_type)
         self.time_linear = nn.Linear(d_model, d_model)
         self.tanh = nn.Tanh()
         self.sigm = nn.Sigmoid()
@@ -93,7 +98,7 @@ class S4Block(nn.Module):
     def forward(self, x, t):
         t = self.time_linear(t)[:, None, :].repeat(1, x.shape[2], 1)
         t = t.transpose(-1, -2)
-        out, _ = self.s4block(x + t)  # S4Layer handles dropout internally
+        out, _ = self.core(x + t)  # S4Layer handles dropout internally
         out = self.tanh(out) * self.sigm(out)
         
         # Apply additional dropout after activation but before final layers
@@ -110,7 +115,7 @@ def Conv1dKaiming(in_channels, out_channels, kernel_size):
     return layer
 
 
-class S4Backbone(nn.Module):
+class SequenceBackbone(nn.Module):
     def __init__(
         self,
         observation_dim,
@@ -120,8 +125,10 @@ class S4Backbone(nn.Module):
         num_residual_blocks,
         dropout=0.0,
         init_skip=True,
+        block_type="s4",
     ):
         super().__init__()
+        self.block_type = block_type.lower()
         self.input_init = nn.Sequential(
             nn.Linear(observation_dim, hidden_dim),
             nn.ReLU(),
@@ -137,14 +144,14 @@ class S4Backbone(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, output_dim),
         )
-        residual_blocks = []
-        for i in range(num_residual_blocks):
-            residual_blocks.append(
-                S4Block(
-                    hidden_dim, dropout=dropout
-                )
+        self.residual_blocks = nn.ModuleList([
+            SequenceBlock(
+                hidden_dim,
+                dropout=dropout,
+                block_type=block_type,
             )
-        self.residual_blocks = nn.ModuleList(residual_blocks)
+            for _ in range(num_residual_blocks)
+        ])
         self.step_embedding = SinusoidalPositionEmbeddings(time_emb_dim)
         self.init_skip = init_skip
 

@@ -1,12 +1,12 @@
 model: unconditional
-diffusion_config: diffusion_s4 #s4 or unet
+diffusion_config: diffusion_s5_large #s4 or unet
 observation_dim: 3
 dataset: custom:lorenz
 freq: H
-context_length: 40
-prediction_length: 20
+context_length: 8
+prediction_length: 2
 dt: .05
-data_samples: 5000
+data_samples: 10000
 lr: 1.e-3
 q: 0.0
 r: 0.0 

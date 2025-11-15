@@ -118,7 +118,7 @@ class SFDiffBase(pl.LightningModule):
     '''
     @torch.no_grad()
     def p_sample(self, x, t, t_index, y=None, h_fn=None, R_inv=None, base_strength=1.0, cheap=True, plot=False,
-                 guidance=True, compute_snr=False, x_true=None):
+                 guidance=True):
         #given learnt score, predict unconditional model mean and then guide it using score of p(y_t|x_t) from tweedie approximation 
         betas_t = extract(self.betas, t, x.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, x.shape)
@@ -153,24 +153,6 @@ class SFDiffBase(pl.LightningModule):
         else:
             posterior_variance_t = extract(self.posterior_variance, t, x.shape)
             sample = guided_mean + torch.sqrt(posterior_variance_t) * torch.randn_like(x)
-
-            
-        snr_db = None
-        if x_true is not None and compute_snr:
-            if x_true.shape[0] == 1 and x.shape[0] > 1:
-                x_true_trunc = x_true.expand(x.shape[0], -1, -1)
-            else:
-                x_true_trunc = x_true
-            
-            # compute SNR per sample
-            snr_samples = []
-            for s in range(sample.shape[0]):
-                signal_power = torch.mean(x_true_trunc[s] ** 2)
-                noise_power = torch.mean((sample[s] - x_true_trunc[s]) ** 2) + 1e-9
-                snr_samples.append(10 * torch.log10(signal_power / noise_power))
-            
-            # mean over samples
-            snr_db = torch.stack(snr_samples).mean()
             
             
         if plot:
@@ -200,8 +182,41 @@ class SFDiffBase(pl.LightningModule):
                 plt.tight_layout()
                 plt.savefig(f"diffusion_frames/step_{t_index:04d}.png")
                 plt.close()
+            
+            elif obs_dim == 2:
+                fig = plt.figure(figsize=(10, 3))
                 
-            else:
+                ax1 = fig.add_subplot(121)
+                ax1.set_title("Dim 1")
+                dim1pred = guided_mean[0, :, 0].detach().cpu().numpy()  # shape: [seq_len]
+                ax1.plot(dim1pred, label=f"Predicted (t={t_index})", alpha=0.8)
+                
+                if guidance:
+                    assert y is not None, "y must be provided for plotting observations"
+                    y_cpu = y[0, :, 0].detach().cpu().numpy()
+                    ax1.set_ylim(min(y_cpu), max(y_cpu))
+                    ax1.plot(y_cpu, label="Observations", alpha=0.7)
+                    
+                ax1.legend(loc='lower left')
+                    
+                ax2 = fig.add_subplot(122)
+                ax2.set_title("Dim 2")
+                dim2pred = guided_mean[0, :, 1].detach().cpu().numpy()  # shape: [seq_len]
+                ax2.plot(dim2pred, label=f"Predicted (t={t_index})", alpha=0.8)
+                
+                if guidance:
+                    assert y is not None, "y must be provided for plotting observations"
+                    y_cpu = y[0, :, 1].detach().cpu().numpy()
+                    ax2.set_ylim(min(y_cpu), max(y_cpu))
+                    ax2.plot(y_cpu, label="Observations", alpha=0.7)
+                
+                ax2.legend(loc='lower left')
+                
+                fig.suptitle(f"Reverse Diffusion Step {t_index}")
+                plt.tight_layout()
+                plt.savefig(f"diffusion_frames/step_{t_index:04d}.png")
+                plt.close()
+            elif obs_dim == 1:
                 # 1D plot
                 plt.figure(figsize=(6, 3))
                 guided_cpu = guided_mean[0, :, 0].detach().cpu().numpy()  # shape: [seq_len]
@@ -218,8 +233,9 @@ class SFDiffBase(pl.LightningModule):
                 plt.tight_layout()
                 plt.savefig(f"diffusion_frames/step_{t_index:04d}.png")
                 plt.close()
-        
-        return sample, snr_db
+            else:
+                raise NotImplemented
+        return sample
 
         
     def observation_grad_cheap(self, x_t, t, y, h_fn, R_inv,context_len):

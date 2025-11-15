@@ -125,6 +125,170 @@ class DualSinusoidalWaves():
             y =  x + np.random.normal(0,self.r)
             ys.append(y)
         return xs, ys
+  
+class LogisticMap():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 1,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
+        return R_inv
+    
+    
+    def generate(self):
+        xs=[]
+        ys=[]
+        chaos = np.random.uniform(2.8, 4)
+        x=np.random.rand()
+        time_points = np.arange(0, self.length, self.dt)
+        for t in time_points:
+            x = chaos*x*(1-x)
+            xs.append(x)
+            y =  x + np.random.normal(0,self.r)
+            ys.append(y)
+        xs = np.array(xs).reshape(-1, 1)
+        ys = np.array(ys).reshape(-1, 1)
+        return xs, ys
+  
+class RandomWalk():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 1,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+    def h_fn(self, x):
+        return x
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
+        return R_inv
+    
+    def generate(self):
+        xs=[]
+        ys=[]
+        x=np.random.rand()
+        time_points = np.arange(0, self.length, self.dt)
+        for t in time_points:
+            x = x + np.random.normal(0,self.q)
+            xs.append(x)
+            y =  x + np.random.normal(0,self.r)
+            ys.append(y)
+        xs = np.array(xs).reshape(-1, 1)
+        ys = np.array(ys).reshape(-1, 1)
+        return xs, ys
+  
+class xDIndependentSinusoidalWaves():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 2,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+        
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        # normalize per feature, not per time
+        R_inv = R_inv / (R_inv.std(dim=(1, 2), keepdim=True) + 1e-5)
+        return R_inv
+    
+    
+    def generate(self):
+        amplitude = np.random.uniform(0.5, 2, size=(self.obs_dim, 1))
+        frequency = np.random.uniform(0.5, 2, size=(self.obs_dim, 1))
+        phase = np.random.randn(self.obs_dim, 1) * 2 * np.pi
+        
+        t = np.arange(0, self.length, self.dt)
+        
+        x = np.sin(frequency * t + phase) * amplitude
+        x += np.random.normal(0, self.q, size=x.shape)
+    
+        y = x + np.random.normal(0, self.r, size=x.shape)
+        
+        return x.T, y.T
+ 
+class TwoDDependentSinusoidalWaves():
+    def __init__(self,
+        length,
+        dt,
+        q,
+        r,
+        obs_dim = 2,
+        ):
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        self.obs_dim = obs_dim
+        
+    def h_fn(self, x):
+        return x
+
+    def R_inv(self, resid):
+        eps = 1e-6
+        var = (self.r ** 2) + eps
+        R_inv = resid / var
+        # normalize per feature, not per time
+        R_inv = R_inv / (R_inv.std(dim=(1, 2), keepdim=True) + 1e-5)
+        return R_inv
+    
+    
+    def generate(self):
+        f1 = np.random.uniform(0.5,2.0)
+        f2 = np.random.uniform(0.5,2.0)
+        a1 = np.random.uniform(0.5,2.0)
+        a2 = np.random.uniform(0.5,2.0)
+        
+        alpha = np.random.uniform(0.5, 1.5)
+
+        t = np.arange(0, self.length, self.dt)
+
+        # main sinusoid
+        x1 = a1 * np.sin(f1 * t)
+        # quadrature sinusoid + nonlinear phase warp
+        x2 = a2 * np.cos(f2 * t + alpha * x1)
+
+        x = np.stack([x1, x2], axis=0)
+
+
+        x = x + np.random.normal(0, self.q, size=x.shape)
+        y = x + np.random.normal(0, self.r, size=x.shape)
+
+        return x.T, y.T
     
 class Lorenz():
     def __init__(self,
@@ -140,13 +304,13 @@ class Lorenz():
         self.r = r
         self.obs_dim = obs_dim
     def h_fn(self, x):
-        return x[..., :self.obs_dim]
+        return x
 
     def R_inv(self, resid):
         eps = 1e-6
         var = (self.r ** 2) + eps
         R_inv = resid / var
-        R_inv = R_inv / (R_inv.std(dim=1, keepdim=True) + 1e-5)
+        R_inv = R_inv / (R_inv.std(dim=(1,2), keepdim=True) + 1e-5)
         return R_inv
     
     

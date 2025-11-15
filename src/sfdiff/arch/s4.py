@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from pytorch_lightning.utilities import rank_zero_only
 from einops import rearrange, repeat
 import opt_einsum as oe
+#s4 from TSDiff
 
 contract = oe.contract
 contract_expression = oe.contract_expression

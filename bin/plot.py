@@ -68,54 +68,51 @@ class StateForecastPlotter:
     def generate_state_forecasts(self, dataset_name: str, start_index=0, num_series=1, num_samples=100):
         """Generate forecasts for multiple time series."""
         scaling = int(self.config['dt']**-1)
+        testing_samples = num_series-start_index
         
         dataset, generator = get_custom_dataset(dataset_name,
-            samples=num_series-start_index,
+            samples=testing_samples,
             context_length=self.config["context_length"],
             prediction_length=self.config["prediction_length"],
             dt=self.config['dt'],
             q=self.config['q'],
             r=self.config['r'],
             observation_dim=self.config['observation_dim'],
+            plot=False
             )
         
         self.model = self._load_model(self.checkpoint_path,generator.h_fn,generator.R_inv)
 
-        selected_series = dataset[start_index:start_index + num_series]
+        selected_series = dataset[start_index:(start_index + num_series)]
         state_series = time_splitter(selected_series, self.config["context_length"] * scaling, self.config["prediction_length"] * scaling)
         forecasts = []
-        snrs=[]
         for series in state_series:
 
             past_observation = torch.as_tensor(series["past_observation"], dtype=torch.float32)
-            if past_observation.ndim == 2:  # shape (batch, seq_len)
+
+            if past_observation.ndim == 2:  # shape (batch, seq_len, dims)
                 past_observation = past_observation.unsqueeze(0) 
 
-            past_state = torch.as_tensor(series["past_state"], dtype=torch.float32)
-            future_state = torch.as_tensor(series["future_state"], dtype=torch.float32)
-            true_state = torch.cat([past_state, future_state], dim=0).unsqueeze(0)
+
             y = past_observation.to(device=self.model.device, dtype=torch.float32)
             # Generate samples from model
-            generated, snr = self.model.sample_n(
+            generated= self.model.sample_n(
                 y=y,
                 x_known=past_observation, 
                 known_len=past_observation.shape[1],
                 num_samples=num_samples,
                 cheap=False,
                 base_strength=.5,
-                plot=True,
+                plot=False,
                 guidance=True,
-                #compute_snr=True,
-                #x_true=true_state.to(device=self.model.device, dtype=torch.float32)
             )
     
             forecasts.append(generated.cpu().numpy())
-            snrs.append(snr)
-            break # Remove this break to process all series
+            #break # Remove this break to process all series
 
-        return forecasts, state_series, snrs
+        return forecasts, state_series
 
-    def plot_forecast(self, forecast, series_data, ax, title="Forecast"):
+    def plot_forecast(self, forecast, series_data, ax, title="Forecast", dim_idx = 0):
         """Plot a single forecast against ground truth states."""
         past_state = series_data["past_state"]
         future_state = series_data["future_state"]
@@ -130,7 +127,9 @@ class StateForecastPlotter:
         # Check if data is 3D
         is_3d = forecast.shape[1] == 3
 
+
         if is_3d:
+
             forecast_vals=forecast
             
             # 3D trajectory plot
@@ -150,7 +149,7 @@ class StateForecastPlotter:
             dataRange = np.arange(0, self.config['prediction_length'] + self.config['context_length'], self.config['dt'])
 
             # Plot ground truth
-            ax.plot(dataRange, total_state[:, 0], color='#1f77b4', linewidth=2.5, label="Ground Truth")  # bright blue
+            ax.plot(dataRange, total_state[:, dim_idx], color='#1f77b4', linewidth=2.5, label="Ground Truth")  # bright blue
 
             # Median forecast
             median_forecast = np.median(forecast_vals, axis=0)
@@ -158,7 +157,7 @@ class StateForecastPlotter:
 
             # Plot observations only up to context length
             obs_end_idx = int(self.config['context_length'] / self.config['dt'])
-            ax.plot(dataRange[:obs_end_idx], total_obs[:obs_end_idx, 0],
+            ax.plot(dataRange[:obs_end_idx], total_obs[:obs_end_idx, dim_idx],
                     color='#ff7f0e', linewidth=1.5, linestyle='--', label="Observation", dashes=(8, 8))
 
             # Shaded forecast intervals
@@ -173,28 +172,9 @@ class StateForecastPlotter:
             ax.axvline(x=self.config['context_length'], color='gray', linestyle=':', alpha=0.8)
             ax.set_title(title)
             ax.grid(True, alpha=0.4)
-            ax.legend(fontsize=10, loc="upper left", frameon=False)
+            ax.legend(fontsize=10, loc='center left', bbox_to_anchor=(1.02, 0.5), frameon=False)
+        
 
-    def plot_snr_curves(self, snrs, series_idx=0, title="SNR During Denoising/Forecasting"):
-        
-        plt.figure(figsize=(10, 4))
-        
-        snr_list = snrs[series_idx]
-        
-        #stupid torch conversions and what not, this is probably very slow but I dont feel like caring
-        snr_values = [s.detach().cpu().item() if torch.is_tensor(s) else s for s in snr_list]
-
-        timesteps = np.arange(len(snr_values),0,-1)
-        plt.plot(timesteps, snr_values, 'o-', color='blue', linewidth=2)
-        plt.xlabel("Denoising Timestep")
-        plt.gca().invert_xaxis()
-        plt.ylabel("SNR (dB)")
-        plt.title(f"{title} (Series {series_idx})")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(f"snr_series_{series_idx}.png", dpi=300)
-        plt.close()
-        logger.info(f"SNR plot saved for series {series_idx}")
 
 def create_continual_learning_plots(config, start_series=0, num_series=3):
     """Create plots for multiple time series."""
@@ -202,42 +182,39 @@ def create_continual_learning_plots(config, start_series=0, num_series=3):
         "Single Task": config["checkpoint_path"]
     }
 
-    num_methods = len(checkpoints)
-    fig, axes = plt.subplots(num_series, num_methods, figsize=(5*num_methods, 4*num_series))
-
+    obs_dim = config['observation_dim']
+    fig, axes = plt.subplots(
+        num_series, obs_dim, figsize=(6 * obs_dim, 4 * num_series), squeeze=False
+    )
     # Ensure axes is always 2D
-    if num_series == 1 and num_methods == 1:
-        axes = np.array([[axes]])
-    elif num_series == 1:
-        axes = axes[np.newaxis, :]           # 1 row, multiple columns
-    elif num_methods == 1:
-        axes = axes[:, np.newaxis]           # multiple rows, 1 column
-
     for method_idx, (method_name, ckpt_path) in enumerate(checkpoints.items()):
-        #try:
-            plotter = StateForecastPlotter(config, ckpt_path)
-            forecasts, series_list, snrs = plotter.generate_state_forecasts(
-                config["dataset"], start_index=start_series, num_series=num_series, num_samples=10
-            )
+        plotter = StateForecastPlotter(config, ckpt_path)
+        forecasts, series_list = plotter.generate_state_forecasts(
+            config["dataset"], start_index=start_series, num_series=num_series, num_samples=10
+        )
 
-            for series_idx, forecast in enumerate(forecasts):
-                ax = axes[series_idx, method_idx]
-                plotter.plot_forecast(forecast, series_list[series_idx], ax, title=f"{method_name} (TS{start_series + series_idx})")
-            
-            for series_idx in range(len(snrs)):
-                plotter.plot_snr_curves(snrs, series_idx=series_idx)
-            
-            logger.info(f"✓ {method_name} plots completed")
+        for series_idx, forecast in enumerate(forecasts):
+            series_data = series_list[series_idx]
+            for dim_idx in range(obs_dim):
+                ax = axes[series_idx, dim_idx]
 
-            '''
-        except Exception as e:
-            logger.error(f"✗ {method_name} failed: {e}")
-            for series_idx in range(num_series):
-                ax = axes[series_idx, method_idx]
-                ax.text(0.5, 0.5, f"Error\n{method_name}", ha='center', va='center', transform=ax.transAxes, fontsize=12, color='red')
-        '''
+                # Extract only this dimension from forecast for plotting
+                forecast_dim = forecast[:, :, dim_idx]
+                plotter.plot_forecast(
+                    forecast_dim[:, :, None],  # restore shape for consistency
+                    series_data,
+                    ax,
+                    title=f"TS{start_series + series_idx} (Dim {dim_idx + 1})",
+                    dim_idx=dim_idx
+                )
+            
+        logger.info(f"✓ {method_name} plots completed")
+
     plt.tight_layout()
-    plt.savefig(f"continual_learning_states_{start_series}_to_{start_series+num_series-1}_{config['dataset'].replace(':','_')}.png", dpi=300)
+    plt.savefig(
+        f"continual_learning_states_{start_series}_to_{start_series+num_series-1}_{config['dataset'].replace(':','_')}.png",
+        dpi=300
+    )
     plt.close(fig)
     logger.info("Comparison plots saved.")
 

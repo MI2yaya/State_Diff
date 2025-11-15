@@ -195,6 +195,7 @@ class SFDiffForecaster:
 
 
 def main(config_path):
+    raise NotImplemented
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 

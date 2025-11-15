@@ -15,6 +15,7 @@ from sfdiff.utils import time_splitter, train_test_val_splitter
 from dataGeneration import make_kf_matrices_for_sinusoid
 
 from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.tsa.arima.model import ARIMA
 from sklearn.linear_model import LinearRegression
 import torch.nn as nn
 import torch.optim as optim
@@ -173,7 +174,7 @@ class SFDiffForecaster:
 
             # Sample next step
             t_step = torch.full((1,), i, dtype=torch.long, device=self.device)
-            x_t, _ = self.model.p_sample(x=x_t, t=t_step, t_index=i, guidance=False)
+            x_t = self.model.p_sample(x=x_t, t=t_step, t_index=i, guidance=False)
 
 
         
@@ -204,19 +205,21 @@ def main(config_path):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
 
-    skipKF=True
+    skipKF=False
     
-    skipSFDiff=False
-    skipSFDiffSNR=True
-    skipSFDiffCond=True
-    skipSFDiffCheapCond=True
+    skipSFDiff=True
+    skipSFDiffSNR=False
+    skipSFDiffCond=False
+    skipSFDiffCheapCond=False
     skipSFDiffExpensiveCond=False
     
     skipAR = False
     skipARX = False
     skipNARX = False
     
-    plot = False
+    skipARIMA = False
+    
+    plot = True
 
 
     # Load configuration
@@ -278,7 +281,7 @@ def main(config_path):
                 x_preds.append(x_pred[0])  # Assuming we're interested in the first state variable
 
             # Kalman Filter Prediction
-            kf_mse= mse(x_preds, x_true_future.squeeze())
+            kf_mse= mse(x_preds, x_true_future)
             
             kf_crps = crps(x_preds, x_true_future)
             kf_MSEs.append(kf_mse)
@@ -355,7 +358,7 @@ def main(config_path):
                 y = past_observation.to(device = SFDiff.device,dtype=torch.float32)
                 # SFDiff Prediction
                 # Generate samples from model
-                generated, snr = SFDiff.model.sample_n(
+                generated = SFDiff.model.sample_n(
                     y=y,
                     x_known=past_observation, 
                     known_len=past_observation.shape[1],
@@ -407,7 +410,7 @@ def main(config_path):
                 y = past_observation.to(device = SFDiff.device,dtype=torch.float32)
                 # SFDiff Prediction
                 # Generate samples from model
-                generated, snr = SFDiff.model.sample_n(
+                generated= SFDiff.model.sample_n(
                     y=y,
                     x_known=past_observation, 
                     known_len=past_observation.shape[1],
@@ -444,8 +447,8 @@ def main(config_path):
             logger.info(f"SFDiff Cheap Guidance + Condition: Future MSE={sfdiff_mse_avg:.4f} ± {sfdiff_mse_std:.4f}, CRPS={sfdiff_crps_avg:.4f} ± {sfdiff_crps_std:.4f}")
             
         if skipSFDiffExpensiveCond == False:
-            trials=3
-            batch_size=50
+            trials=5
+            batch_size=10
             sfdiff_MSEs=[]
             sfdiff_CRPSs=[]
             for i in range(trials):
@@ -459,7 +462,7 @@ def main(config_path):
                 y = past_observation.to(device = SFDiff.device,dtype=torch.float32)
                 # SFDiff Prediction
                 # Generate samples from model
-                generated, snr = SFDiff.model.sample_n(
+                generated= SFDiff.model.sample_n(
                     y=y,
                     x_known=past_observation, 
                     known_len=past_observation.shape[1],
@@ -502,13 +505,16 @@ def main(config_path):
         ar_MSEs, ar_CRPSs = [], []
 
 
-        y_train = np.concatenate([s["past_observation"] for s in train_data], axis=0).squeeze()
+        y_train = np.concatenate(
+            [np.concatenate([s["past_observation"], s["future_observation"]], axis=0) for s in train_data],
+            axis=0
+        ).squeeze()
         model = AutoReg(y_train, lags=lag).fit()
 
 
         for i, sample in enumerate(test_data):
             y_obs = sample["past_observation"].squeeze()
-            x_true_future = sample["future_state"].squeeze()
+            x_true_future = sample["future_state"]
 
 
             forecast = []
@@ -559,13 +565,13 @@ def main(config_path):
         X_train = np.array(X_train)
         Y_train = np.array(Y_train)
         model.fit(X_train,Y_train)
-        # --- Evaluate on test trajectories
+        # Evaluate on test trajectories
 
 
         for i,sample in enumerate(test_data):
             forecast = []
             y_obs = sample["past_observation"]
-            x_true_future = sample["future_state"].squeeze()
+            x_true_future = sample["future_state"]
 
             # start with last 'lag' steps of past observations
             y_hist = y_obs[-lag:].flatten().reshape(1, -1)
@@ -604,7 +610,7 @@ def main(config_path):
         narx_MSEs, narx_CRPSs = [], []
         lag = 10
 
-        # --- Build global train dataset
+        # Build global train dataset
         X_train, Y_train = [], []
         for s in train_data:
             y_obs = s["past_observation"]
@@ -614,7 +620,7 @@ def main(config_path):
         X_train = torch.tensor(np.array(X_train), dtype=torch.float32)
         Y_train = torch.tensor(np.array(Y_train), dtype=torch.float32).unsqueeze(1)
 
-        # --- Train NARX on all trajectories
+        #Train NARX on all trajectories
         model = NARX(input_dim=y_obs.shape[1], lag=lag)
         opt = optim.Adam(model.parameters(), lr=1e-3)
         loss_fn = nn.MSELoss()
@@ -627,11 +633,11 @@ def main(config_path):
             loss.backward()
             opt.step()
 
-        # --- Evaluate on each test trajectory
+        # Evaluate on each test trajectory
         model.eval()
         for i, sample in enumerate(test_data):
             past_obs = sample["past_observation"]
-            x_true_future = sample["future_state"].squeeze()
+            x_true_future = sample["future_state"]
 
             # Initialize forecast history with last 'lag' past observations
             y_hist = past_obs[-lag:].copy()
@@ -670,6 +676,78 @@ def main(config_path):
         logger.info(f"NARX({lag}) Model: Future MSE={np.mean(narx_MSEs):.4f} ± {np.std(narx_MSEs):.4f}, "
                     f"CRPS={np.mean(narx_CRPSs):.4f} ± {np.std(narx_CRPSs):.4f}")
 
+    if skipARIMA == False:
+        
+        model_trials = 10
+        y_train = np.concatenate(
+            [np.concatenate([s["past_observation"], s["future_observation"]], axis=0) for s in train_data],
+            axis=0
+        ).squeeze()
+        
+        best_model = None
+        best_mse = float('inf')
+        best_order = None
+        for _ in range(model_trials):
+            p = np.random.randint(0, 4)
+            d = np.random.randint(0, 3)
+            q = np.random.randint(0, 4)
+            try:
+                model = ARIMA(y_train, order=(p, d, q))
+                model_fit = model.fit(method_kwargs={"warn_convergence": False})
+                # quick self-forecast to score quality
+                forecast = model_fit.forecast(steps=prediction_length)
+                mse_trial = mse(forecast,y_train[-prediction_length])
+                if mse_trial < best_mse:
+                    best_mse = mse_trial
+                    best_model = model_fit
+                    best_order = (p, d, q)
+            except Exception:
+                continue
+        
+        
+        if best_model is None:
+            raise RuntimeError("All random ARIMA trials failed to converge.")
+        
+        logger.info(f"Selected ARIMA{best_order} with validation MSE={best_mse:.4f} from {model_trials} tries.")
+        
+        arima_MSEs, arima_CRPSs = [], []
+
+        for i, sample in enumerate(test_data):
+            y_obs = sample["past_observation"].squeeze()
+            x_true_future = sample["future_state"]
+
+            try:
+                model_fit = ARIMA(y_obs, order=best_order).fit(method_kwargs={"warn_convergence": False})
+                forecast = model_fit.forecast(steps=len(x_true_future))
+            except Exception:
+                forecast = best_model.forecast(steps=len(x_true_future))
+
+            mse_val = mse(forecast,x_true_future)
+            crps_val = crps(forecast,x_true_future)
+
+            arima_MSEs.append(mse_val)
+            arima_CRPSs.append(crps_val)
+
+            if plot and i == 0:
+                plt.figure(figsize=(10, 5))
+                total_length = len(y_obs) + len(x_true_future)
+                time_axis = np.arange(total_length)
+                plt.plot(time_axis[:len(y_obs)], y_obs, label='Past Observations', color='blue')
+                plt.plot(time_axis[len(y_obs):], x_true_future, label='True Future State', color='green')
+                plt.plot(time_axis[len(y_obs):], forecast, label=f'ARIMA{best_order} Forecast', color='red')
+                plt.title(f"ARIMA{best_order} Prediction vs True Future")
+                plt.xlabel('Time')
+                plt.ylabel('Value')
+                plt.legend()
+                plt.show()
+
+        mean_mse, std_mse = np.mean(arima_MSEs), np.std(arima_MSEs)
+        mean_crps, std_crps = np.mean(arima_CRPSs), np.std(arima_CRPSs)
+
+        if logger:
+            logger.info(f"ARIMA{best_order}: MSE={mean_mse:.4f} ± {std_mse:.4f}, "
+                        f"CRPS={mean_crps:.4f} ± {std_crps:.4f}")
+        
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(

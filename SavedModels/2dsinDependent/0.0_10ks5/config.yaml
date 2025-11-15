@@ -1,0 +1,28 @@
+batch_size: 128
+checkpoint_path: lightning_logs\version_6\best_checkpoint.ckpt
+config: configs\2dsindependent.yaml
+context_length: 40
+data_samples: 10000
+dataset: custom:2dsindependent
+device: cuda:0
+diffusion_config: diffusion_s5
+dt: 0.25
+eval_every: 50
+freq: H
+gradient_clip_val: 0.5
+init_skip: false
+lr: 0.001
+max_epochs: 250
+model: unconditional
+num_batches_per_epoch: 100
+num_samples: 16
+observation_dim: 2
+out_dir: ./
+prediction_length: 20
+q: 0.0
+r: 0.0
+sampler: ddpm
+sampler_params:
+  guidance: quantile
+  scale: 2
+setup: forecasting

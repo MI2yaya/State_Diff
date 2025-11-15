@@ -23,7 +23,18 @@ from sfdiff.utils import (
     StateObsDataset
 )
 from torch.utils.data import DataLoader
+from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 
+torch.set_float32_matmul_precision("high")
+
+
+'''
+To see tensorboard training results run
+
+tensorboard --logdir=lightning_logs
+
+
+'''
 
 
 def create_model(config,context_length,prediction_length,h_fn,R_inv):
@@ -59,7 +70,9 @@ def main(config, log_dir):
         r=config['r'],
         observation_dim=config['observation_dim'],
         plot=True
-        )
+    )
+
+
 
     model = create_model(config,context_length,prediction_length,generator.h_fn,generator.R_inv)
 
@@ -67,6 +80,7 @@ def main(config, log_dir):
     time_data = time_splitter(dataset, context_length, prediction_length)
     split_data = train_test_val_splitter(time_data, config['data_samples'], 1, 0, 0.0)
     # Prepare training data
+
     train_dataset = StateObsDataset(split_data["train"])
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
 
@@ -96,6 +110,18 @@ def main(config, log_dir):
     )
 
     callbacks.append(checkpoint_callback)
+    
+    tb_logger = TensorBoardLogger(
+        save_dir="lightning_logs",  # use default
+        name="",
+    )
+
+    # CSV logger
+    csv_logger = CSVLogger(
+        save_dir="lightning_logs",  # point to the same version folder
+        name="",                     # no subfolder
+        version=tb_logger.version, 
+    )
 
     # Trainer setup
     if config["device"].startswith("cuda") and torch.cuda.is_available():
@@ -114,11 +140,14 @@ def main(config, log_dir):
         callbacks=callbacks,
         default_root_dir=log_dir,
         gradient_clip_val=config.get("gradient_clip_val", None),
+        logger = [tb_logger, csv_logger],
     )
 
     log_dir = Path(trainer.logger.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     config_save_path = log_dir / "config.yaml"
+    best_ckpt_path = Path(log_dir) / "best_checkpoint.ckpt"
+    config['checkpoint_path'] = str(best_ckpt_path)
     with open(config_save_path, "w") as f:
         yaml.safe_dump(config, f)
     logger.info(f"Config saved to {config_save_path}")
@@ -126,7 +155,6 @@ def main(config, log_dir):
     logger.info(f"Logging to {log_dir}")
     trainer.fit(model, train_loader)
     logger.info("Training completed and best checkpoint saved.")
-    best_ckpt_path = Path(log_dir) / "best_checkpoint.ckpt"
 
     if not best_ckpt_path.exists():
         torch.save(

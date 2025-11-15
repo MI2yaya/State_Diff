@@ -3,7 +3,7 @@
 import copy
 
 import torch
-from sfdiff.arch.backbones import S4Backbone, UNetBackbone
+from sfdiff.arch.backbones import SequenceBackbone, UNetBackbone
 from sfdiff.model.diffusion._base import SFDiffBase
 from sfdiff.utils import make_diffusion_gif
 
@@ -39,10 +39,10 @@ class SFDiff(SFDiffBase):
 
         self.modelType=modelType
         
-        if modelType=='s4':
-            print('Running s4')
+        if modelType=='s4' or modelType=="s5":
+            print(f'Running {modelType}')
             backbone_parameters["dropout"] = dropout_rate
-            self.backbone = S4Backbone(
+            self.backbone = SequenceBackbone(
                 **backbone_parameters,
                 init_skip=init_skip,
             )
@@ -78,8 +78,6 @@ class SFDiff(SFDiffBase):
         base_strength=0.1,
         plot=False,
         guidance=True,
-        compute_snr=False,
-        x_true=None,
         
     ):
         device = next(self.backbone.parameters()).device
@@ -94,21 +92,17 @@ class SFDiff(SFDiffBase):
         if x_known is not None:
             mask = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
             mask[:, :known_len, :] = 1
-
             x_known_full = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
             x_known_full[:, :known_len, :] = x_known
         else:
             mask = None
             x_known_full = None
 
-        snrs = []
 
         for i in reversed(range(self.timesteps)):
             t = torch.full((num_samples,), i, device=device, dtype=torch.long)
 
-            # one reverse step
-
-            x_prev_uncond, snr = self.p_sample(
+            x_prev_uncond = self.p_sample(
                 x=samples,
                 t=t,
                 t_index=i,
@@ -118,25 +112,22 @@ class SFDiff(SFDiffBase):
                 base_strength=base_strength,
                 cheap=cheap,
                 plot=plot,
-                guidance=guidance,
-                compute_snr=compute_snr,
-                x_true=x_true if compute_snr else None,
+                guidance=guidance
             )
 
             #x_prev_uncond, snr = self.p_sample(x_t=samples,t=t,)
             if mask is not None and i > 0:
-                t_prev = torch.full((num_samples,), i - 1, dtype=torch.long, device=self.device)
+                t_prev = torch.full((num_samples,), i - 1, dtype=torch.long, device=device)
                 known_prev = self.q_sample(x_known_full, t_prev)
-                samples = (mask * x_known_full) + ((1 - mask) * x_prev_uncond)
+                samples = (mask * known_prev) + ((1 - mask) * x_prev_uncond)
             else:
                 samples = x_prev_uncond
 
-            snrs.append(snr)
             
         if plot:
             make_diffusion_gif()
             
-        return samples, snrs
+        return samples
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         for rate, state_dict in zip(self.ema_rate, self.ema_state_dicts):
