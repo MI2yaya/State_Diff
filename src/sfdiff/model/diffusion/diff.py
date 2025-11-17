@@ -71,8 +71,6 @@ class SFDiff(SFDiffBase):
     def sample_n(
         self,
         y,
-        x_known=None,      
-        known_len=None,  
         num_samples: int = 1,
         cheap=True,
         base_strength=0.1,
@@ -84,19 +82,20 @@ class SFDiff(SFDiffBase):
         context_len = self.context_length
         full_len = context_len + self.prediction_length
         seq_len = full_len
+        known_len = y.shape[1]
 
         # initial noise
         samples = torch.randn((num_samples, seq_len, self.observation_dim), device=device)
 
 
-        if x_known is not None:
+        if y is not None:
             mask = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
             mask[:, :known_len, :] = 1
-            x_known_full = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
-            x_known_full[:, :known_len, :] = x_known
+            known_full = torch.zeros((num_samples, seq_len, self.observation_dim), device=device)
+            known_full[:, :known_len, :] = y
         else:
             mask = None
-            x_known_full = None
+            known_full = None
 
 
         for i in reversed(range(self.timesteps)):
@@ -118,7 +117,7 @@ class SFDiff(SFDiffBase):
             #x_prev_uncond, snr = self.p_sample(x_t=samples,t=t,)
             if mask is not None and i > 0:
                 t_prev = torch.full((num_samples,), i - 1, dtype=torch.long, device=device)
-                known_prev = self.q_sample(x_known_full, t_prev)
+                known_prev = self.q_sample(known_full, t_prev)
                 samples = (mask * known_prev) + ((1 - mask) * x_prev_uncond)
             else:
                 samples = x_prev_uncond

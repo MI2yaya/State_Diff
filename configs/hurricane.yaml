@@ -1,22 +1,20 @@
-diffusion_config: diffusion_s5_large #s4 or unet
-observation_dim: 3
-dataset: custom:lorenz
-freq: H
-context_length: 50
-prediction_length: 10
-dt: .05
-data_samples: 10000
+model: unconditional
+diffusion_config: diffusion_s5_large #s5, s4, or unet
+dataset: dataset:hurricane
+freq: 6H
+context_length: 10
+prediction_length: 5
 lr: 1.e-3
-q: 1.e-4
-r: 1.e-4
-init_skip: True #initial skip connection
+init_skip: False
 gradient_clip_val: 0.5
-max_epochs: 250 
+max_epochs: 250
 num_batches_per_epoch: 100
 batch_size: 128
-# Used only in callback,
-# the final evaluation uses 100 samples
 num_samples: 16
+sampler: ddpm
+sampler_params:
+  guidance: quantile
+  scale: 2
 eval_every: 50
 device: cuda:0 # "cuda:0" for windows, "mps" for mac ONLY FOR TRAINING(breaks during forecasts), "cpu" for default
 setup: forecasting

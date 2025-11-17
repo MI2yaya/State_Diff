@@ -1,10 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
-from dataGeneration import SinusoidalWaves,Lorenz,DualSinusoidalWaves,LogisticMap, RandomWalk,xDIndependentSinusoidalWaves,TwoDDependentSinusoidalWaves
+from dataGeneration import SinusoidalWaves,Lorenz,DualSinusoidalWaves,LogisticMap,RandomWalk,xDIndependentSinusoidalWaves,TwoDDependentSinusoidalWaves, MassSpringChain
+from dataRetrieve import Hurdat
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import random
+import os
 
 def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_length=20, dt=1,q=1,r=1,observation_dim=1,plot=False):
     generatingClasses = {
@@ -16,9 +18,10 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
         "2dsinindependent":xDIndependentSinusoidalWaves,
         "xdsinindependent":xDIndependentSinusoidalWaves,
         "2dsindependent": TwoDDependentSinusoidalWaves,
+        "massspringchain":MassSpringChain,
 
     }
-    generator = generatingClasses[dataset_name.split(":")[1]](context_length+prediction_length,dt,q,r,observation_dim)
+    generator = generatingClasses[dataset_name](context_length+prediction_length,dt,q,r,observation_dim)
 
     states = []
     observations = []
@@ -29,6 +32,7 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
 
     state_array = np.array(states)
     observation_array = np.array(observations)
+
 
 
     if plot:
@@ -42,7 +46,7 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
 
         if dim == 1:
             fig = plt.figure(figsize=(10, 6))
-            plt.title(f'{dataset_name.split(":")[1].capitalize()} Wave with Noisy Observations')
+            plt.title(f'{dataset_name.capitalize()} Wave with Noisy Observations')
             plt.plot(dataRange, true_state, label='True Value')
             plt.plot(dataRange, noisy_state, label='Noisy Value')
             plt.axvline(x=context_length, linestyle=':', color='r', label='End of Context')
@@ -54,13 +58,13 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
         elif dim == 2:
             fig = plt.figure(figsize = (10,6))
             ax1 = fig.add_subplot(121)
-            ax1.set_title(f'{dataset_name.split(":")[1].capitalize()} (2D) Dim 1')
+            ax1.set_title(f'{dataset_name.capitalize()} (2D) Dim 1')
             ax1.plot(dataRange, true_state[:, 0], label='True dim 1')
             ax1.plot(dataRange, noisy_state[:, 0], '--', label='Noisy dim 1')
             ax1.axvline(x=context_length, linestyle=':', color='r', label='End of Context')
             
             ax2 = fig.add_subplot(122)
-            ax2.set_title(f'{dataset_name.split(":")[1].capitalize()} (2D) Dim 2')
+            ax2.set_title(f'{dataset_name.capitalize()} (2D) Dim 2')
             ax2.plot(dataRange, true_state[:, 1], label='True dim 2')
             ax2.plot(dataRange, noisy_state[:, 1], '--', label='Noisy dim 2')
             ax2.axvline(x=context_length, linestyle=':', color='r', label='End of Context')
@@ -74,7 +78,7 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
 
             # 3D trajectory spanning the entire top row
             ax = fig.add_subplot(gs[0, :], projection='3d')
-            ax.set_title(f'{dataset_name.split(":")[1].capitalize()} (3D Trajectory)')
+            ax.set_title(f'{dataset_name.capitalize()} (3D Trajectory)')
             ax.plot(true_state[:, 0], true_state[:, 1], true_state[:, 2], label='True Trajectory')
             ax.plot(noisy_state[:, 0], noisy_state[:, 1], noisy_state[:, 2], linestyle='--', label='Noisy Trajectory')
             ax.legend()
@@ -106,6 +110,10 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
 
             plt.tight_layout()
             plt.show()
+            
+        else:
+            print(f"Unsupported dim {dim}")
+            raise ValueError
 
 
 
@@ -125,3 +133,31 @@ def get_custom_dataset(dataset_name, samples=10, context_length=80,prediction_le
 
 
 
+def get_stored_dataset(dataset_name, config=None,length=5,plot=False):
+    retrievers = {
+        "hurricane": Hurdat,
+    }
+
+    retriever = retrievers[dataset_name](length=length,plot=plot)
+    
+    observations = retriever.generate()
+
+    custom_data = [
+        {
+            "state":np.array(obs),#only needed for batching ig,
+            "observation":np.array(obs),
+        }
+        for obs in observations
+    ]
+    custom_data = np.array(custom_data)
+    
+    config['dt'] = retriever.dt
+    config['r']=retriever.r
+    config['q']=retriever.q
+    config['observation_dim']=retriever.obs_dim
+    config['data_samples']=len(observations)
+
+    
+
+    return custom_data,retriever,config
+    

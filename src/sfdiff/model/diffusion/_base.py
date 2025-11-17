@@ -118,7 +118,7 @@ class SFDiffBase(pl.LightningModule):
     '''
     @torch.no_grad()
     def p_sample(self, x, t, t_index, y=None, h_fn=None, R_inv=None, base_strength=1.0, cheap=True, plot=False,
-                 guidance=True):
+                 guidance=True, y_mask=None):
         #given learnt score, predict unconditional model mean and then guide it using score of p(y_t|x_t) from tweedie approximation 
         betas_t = extract(self.betas, t, x.shape)
         sqrt_recip_alphas_t = extract(self.sqrt_recip_alphas, t, x.shape)
@@ -134,10 +134,10 @@ class SFDiffBase(pl.LightningModule):
             assert h_fn is not None and R_inv is not None and y is not None, "h_fn and R_inv must be provided for guidance"
             if cheap:
                 with torch.enable_grad():
-                    grad_logp_y = self.observation_grad_cheap(x, t, y, h_fn, R_inv,self.context_length) 
+                    grad_logp_y = self.observation_grad_cheap(x, t, y, h_fn, R_inv,self.context_length,y_mask) 
             else:
                 with torch.enable_grad():
-                    grad_logp_y = self.observation_grad_expensive(x,t,y,h_fn,R_inv,self.context_length)
+                    grad_logp_y = self.observation_grad_expensive(x,t,y,h_fn,R_inv,self.context_length,y_mask)
                     
             guide_strength = base_strength
             guided_mean = model_mean + guide_strength* betas_t * grad_logp_y
@@ -238,7 +238,7 @@ class SFDiffBase(pl.LightningModule):
         return sample
 
         
-    def observation_grad_cheap(self, x_t, t, y, h_fn, R_inv,context_len):
+    def observation_grad_cheap(self, x_t, t, y, h_fn, R_inv,context_len,y_mask):
         # no autograd through backbone required (only need grad through h)
         x_t = x_t.requires_grad_(True)
         eps = self.backbone(x_t, t)
@@ -249,7 +249,7 @@ class SFDiffBase(pl.LightningModule):
         y_pred = h_fn(x0)
         
         # only guide on known context
-        resid = y[:, :context_len, :] - y_pred[:, :context_len, :]
+        resid = (y[:, :context_len, :] - y_pred[:, :context_len, :])
         r = R_inv(resid)
 
         # compute J_h^T r per-batch (cheap)
@@ -262,7 +262,7 @@ class SFDiffBase(pl.LightningModule):
 
         return Jt_r
 
-    def observation_grad_expensive(self, x_t, t, y, h_fn, R_inv, context_len):
+    def observation_grad_expensive(self, x_t, t, y, h_fn, R_inv, context_len,y_mask):
         x_t = x_t.requires_grad_(True)
         eps = self.backbone(x_t, t)
         
@@ -273,7 +273,7 @@ class SFDiffBase(pl.LightningModule):
         y_pred = h_fn(x0)
         
         # only guide on known context
-        resid = y[:, :context_len, :] - y_pred[:, :context_len, :]
+        resid = (y[:, :context_len, :] - y_pred[:, :context_len, :])
         r = R_inv(resid)  # [B, context_len, ydim]
 
         w = []
@@ -358,6 +358,8 @@ class SFDiffBase(pl.LightningModule):
             dtype=torch.float32,
             device=device
         )
+        mask = ~torch.isnan(x_start)
+        x_start = torch.nan_to_num(x_start, nan=0.0)
 
         t = torch.randint(0, self.timesteps, (x_start.shape[0],), device=device).long()
 
@@ -366,7 +368,9 @@ class SFDiffBase(pl.LightningModule):
         x_t = self.q_sample(x_start, t, noise)  # forward diffusion
         predicted_noise = self.backbone(x_t, t) # unconditional model
 
-        loss = F.mse_loss(predicted_noise, noise)
+
+
+        loss = ((predicted_noise - noise)**2 * mask).sum() / mask.sum()
 
         self.log("elbo_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
         return {"loss": loss, "elbo_loss": loss}

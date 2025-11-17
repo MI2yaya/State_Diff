@@ -289,6 +289,18 @@ class TwoDDependentSinusoidalWaves():
         y = x + np.random.normal(0, self.r, size=x.shape)
 
         return x.T, y.T
+  
+class MassSpringChain:
+    def __init__(self, length, dt, q, r, obs_dim=3):
+        self.N = obs_dim
+        self.state_dim = 2 * self.N
+
+        self.length = length
+        self.dt = dt
+        self.q = q
+        self.r = r
+        raise NotImplementedError
+
     
 class Lorenz():
     def __init__(self,

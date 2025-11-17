@@ -13,7 +13,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import numpy as np
 
 import sfdiff.configs as diffusion_configs
-from sfdiff.dataset import get_custom_dataset
+from sfdiff.dataset import get_custom_dataset, get_stored_dataset
 from sfdiff.model.callback import SFStateMSECallback
 from sfdiff.model.diffusion.diff import SFDiff
 from sfdiff.utils import (
@@ -54,35 +54,41 @@ def create_model(config,context_length,prediction_length,h_fn,R_inv):
 
 
 def main(config, log_dir):
-    dataset_name = config["dataset"]
+    dataset_type,dataset_name = config["dataset"].lower().split(':')
+    
+    if dataset_type == 'custom':
+        dataset, generator = get_custom_dataset(dataset_name,
+            samples=config['data_samples'],
+            context_length=config["context_length"],
+            prediction_length=config["prediction_length"],
+            dt=config['dt'],
+            q=config['q'],
+            r=config['r'],
+            observation_dim=config['observation_dim'],
+            plot=True
+        )
+    elif dataset_type == 'dataset':
+        dataset, generator,config = get_stored_dataset(dataset_name,
+            config=config,
+            length=config['context_length']+config['prediction_length'],
+            plot=True)
+    else:
+        print(f"Unknown dataset type: {dataset_type}")
+        raise NotImplementedError
+    
     scaling = int(config['dt']**-1)
-
     context_length = config["context_length"] * scaling
     prediction_length = config["prediction_length"] * scaling
-
-
-    dataset, generator = get_custom_dataset(dataset_name,
-        samples=config['data_samples'],
-        context_length=config["context_length"],
-        prediction_length=config["prediction_length"],
-        dt=config['dt'],
-        q=config['q'],
-        r=config['r'],
-        observation_dim=config['observation_dim'],
-        plot=True
-    )
-
-
-
+    
     model = create_model(config,context_length,prediction_length,generator.h_fn,generator.R_inv)
 
     # Split dataset
     time_data = time_splitter(dataset, context_length, prediction_length)
     split_data = train_test_val_splitter(time_data, config['data_samples'], 1, 0, 0.0)
+    
     # Prepare training data
-
     train_dataset = StateObsDataset(split_data["train"])
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True,num_workers=0)
 
     # Callbacks
     callbacks = [

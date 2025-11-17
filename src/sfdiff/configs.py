@@ -10,7 +10,7 @@ backbone_s5 = {
     "num_residual_blocks": 5,
 }
 backbone_s5_large = {
-    "hidden_dim": 64,
+    "hidden_dim": 128,
     "time_emb_dim": 256,
     "num_residual_blocks": 10,
 }

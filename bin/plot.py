@@ -13,7 +13,7 @@ import argparse
 import sfdiff.configs as diffusion_configs
 
 from sfdiff.model.diffusion.diff import SFDiff
-from sfdiff.dataset import get_custom_dataset
+from sfdiff.dataset import get_custom_dataset, get_stored_dataset
 
 from sfdiff.utils import (
     train_test_val_splitter,
@@ -70,16 +70,27 @@ class StateForecastPlotter:
         scaling = int(self.config['dt']**-1)
         testing_samples = num_series-start_index
         
-        dataset, generator = get_custom_dataset(dataset_name,
-            samples=testing_samples,
-            context_length=self.config["context_length"],
-            prediction_length=self.config["prediction_length"],
-            dt=self.config['dt'],
-            q=self.config['q'],
-            r=self.config['r'],
-            observation_dim=self.config['observation_dim'],
-            plot=False
+        dataset_type,dataset_name = self.config["dataset"].lower().split(':')
+        
+        if dataset_type == 'custom':
+            dataset, generator = get_custom_dataset(dataset_name,
+                samples=self.config['data_samples'],
+                context_length=self.config["context_length"],
+                prediction_length=self.config["prediction_length"],
+                dt=self.config['dt'],
+                q=self.config['q'],
+                r=self.config['r'],
+                observation_dim=self.config['observation_dim'],
+                plot=False
             )
+        elif dataset_type == 'dataset':
+            dataset, generator,_ = get_stored_dataset(dataset_name,
+                config=self.config,
+                length=self.config['context_length']+self.config['prediction_length'],
+                plot=False)
+        else:
+            print(f"Unknown dataset type: {dataset_type}")
+            raise NotImplementedError
         
         self.model = self._load_model(self.checkpoint_path,generator.h_fn,generator.R_inv)
 
@@ -98,10 +109,8 @@ class StateForecastPlotter:
             # Generate samples from model
             generated= self.model.sample_n(
                 y=y,
-                x_known=past_observation, 
-                known_len=past_observation.shape[1],
                 num_samples=num_samples,
-                cheap=False,
+                cheap=True,
                 base_strength=.5,
                 plot=False,
                 guidance=True,

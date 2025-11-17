@@ -1,14 +1,14 @@
 diffusion_config: diffusion_s5_large #s4 or unet
 observation_dim: 3
-dataset: custom:lorenz
+dataset: custom:massspringchain
 freq: H
-context_length: 50
-prediction_length: 10
-dt: .05
-data_samples: 10000
+context_length: 80
+prediction_length: 20
+dt: .1
+data_samples: 10
 lr: 1.e-3
-q: 1.e-4
-r: 1.e-4
+q: 0
+r: 0
 init_skip: True #initial skip connection
 gradient_clip_val: 0.5
 max_epochs: 250 
